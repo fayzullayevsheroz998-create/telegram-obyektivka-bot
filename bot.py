@@ -10,11 +10,51 @@ BASE = Path(__file__).resolve().parent
 TEMPLATE = BASE / 'template.docx'
 OUT = BASE / 'generated'; OUT.mkdir(exist_ok=True)
 DB_PATH = BASE / 'bot.db'
-load_dotenv(BASE / '.env')
-BOT_TOKEN = os.getenv('BOT_TOKEN','').strip()
-CARD_NUMBER = os.getenv('CARD_NUMBER','').strip()
-PRICE = os.getenv('PRICE','').strip()
-ADMIN_IDS = {int(x.strip()) for x in os.getenv('ADMIN_IDS','').split(',') if x.strip().isdigit()}
+# Configuration:
+# - On a PC, an optional .env file is loaded for local development.
+# - On Railway, variables are supplied by Railway directly through the environment.
+#   A .env file is NOT required on Railway and should NOT be committed to GitHub.
+local_env = BASE / '.env'
+if local_env.exists():
+    load_dotenv(local_env, override=False)
+
+def read_env(name):
+    value = os.environ.get(name)
+    return value.strip() if value else ''
+
+BOT_TOKEN = read_env('BOT_TOKEN')
+CARD_NUMBER = read_env('CARD_NUMBER')
+PRICE = read_env('PRICE')
+
+_raw_admin_ids = read_env('ADMIN_IDS')
+ADMIN_IDS = {
+    int(x.strip())
+    for x in _raw_admin_ids.split(',')
+    if x.strip().isdigit()
+}
+
+def check_environment():
+    missing = []
+    if not BOT_TOKEN:
+        missing.append('BOT_TOKEN')
+    if not _raw_admin_ids:
+        missing.append('ADMIN_IDS')
+    if not CARD_NUMBER:
+        missing.append('CARD_NUMBER')
+    if not PRICE:
+        missing.append('PRICE')
+
+    if missing:
+        print('ENV ERROR: missing variables: ' + ', '.join(missing))
+        print('ENV SOURCE: Railway Variables or local .env')
+        return False
+
+    if not ADMIN_IDS:
+        print('ENV ERROR: ADMIN_IDS contains no numeric Telegram IDs')
+        return False
+
+    print('ENV OK: all required variables are loaded')
+    return True
 
 TEXTS = {
 'ru': {
@@ -257,9 +297,15 @@ async def cancel(update,context):
     lang=context.user_data.get('lang','ru'); context.user_data['state']='menu'; await update.message.reply_text(TEXTS[lang]['main'],reply_markup=menu_kb(lang))
 
 def main():
-    if not BOT_TOKEN: raise RuntimeError('Не задан BOT_TOKEN. Укажите его в .env')
-    if not TEMPLATE.exists(): raise FileNotFoundError(f'Не найден шаблон: {TEMPLATE}')
-    db(); app=Application.builder().token(BOT_TOKEN).build()
+    if not check_environment():
+        raise RuntimeError(
+            'Не заданы обязательные переменные окружения. '
+            'На Railway добавьте BOT_TOKEN, ADMIN_IDS, CARD_NUMBER и PRICE в Variables.'
+        )
+    if not TEMPLATE.exists():
+        raise FileNotFoundError(f'Не найден шаблон: {TEMPLATE}')
+    db()
+    app=Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler('start',start_cmd)); app.add_handler(CommandHandler('admin',admin)); app.add_handler(CommandHandler('myid',myid)); app.add_handler(CommandHandler('cancel',cancel))
     app.add_handler(CallbackQueryHandler(admin_callback,pattern=r'^(approve|reject):')); app.add_handler(CallbackQueryHandler(bot_control,pattern=r'^bot:'))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND,router))
